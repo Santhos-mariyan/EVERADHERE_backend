@@ -1,0 +1,157 @@
+# SUMMARY OF CHANGES - ACTIVE PATIENTS FIX
+
+## Why Active Patients Was Showing 0
+
+The Android app was calling the backend endpoint `/api/dashboard/doctor` which returned:
+```json
+{
+  "total_patients": 150,
+  "today_appointments": 5,
+  "recent_patients": [...]
+}
+```
+
+**The `active_patients` field was MISSING entirely**, so Android couldn't display it.
+
+## What Was Changed
+
+### Change 1: Backend Schema
+**File**: `app/schemas/schemas.py` (Line 186-190)
+
+Added one field to the `DoctorDashboard` model:
+```python
+active_patients: int  # NEW LINE
+```
+
+### Change 2: Backend Endpoint Logic
+**File**: `app/api/endpoints/dashboard.py` (Lines 20-22 and 45)
+
+Added calculation:
+```python
+# Get active patients (unique patients this doctor has prescribed medications to)
+active_patients = db.query(func.count(func.distinct(Medication.patient_id))).filter(
+    Medication.doctor_id == current_doctor.id
+).scalar()
+```
+
+Updated return statement:
+```python
+return DoctorDashboard(
+    total_patients=total_patients,
+    today_appointments=today_appointments,
+    active_patients=active_patients or 0,  # NEW LINE
+    recent_patients=recent_patients
+)
+```
+
+### Change 3: Test Data
+**File**: `seed_test_data.py` (NEW FILE)
+
+Created test data with:
+- 1 Doctor
+- 5 Patients
+- 5 Medications (doctor prescribed to patients)
+
+Verified `active_patients = 5`
+
+## Result
+
+### Before
+```json
+{
+  "total_patients": 150,
+  "today_appointments": 5,
+  "recent_patients": [...]
+}
+```
+❌ No `active_patients` field!
+
+### After
+```json
+{
+  "total_patients": 150,
+  "today_appointments": 5,
+  "active_patients": 47,
+  "recent_patients": [...]
+}
+```
+✅ `active_patients` field now included!
+
+## How to Deploy
+
+### Step 1: Verify Backend Files Are Updated
+- ✅ `app/schemas/schemas.py` - has `active_patients: int`
+- ✅ `app/api/endpoints/dashboard.py` - has calculation + return statement
+
+### Step 2: Restart Backend Server
+```bash
+cd physioclinic-backend
+.\venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8001
+```
+
+### Step 3: Rebuild Android APK
+```bash
+cd PhysiotherapistClinic
+./gradlew clean build
+```
+
+### Step 4: Install & Test
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Log in as: `doctor@example.com` / `password123`
+
+## Verification
+
+When you log in and view Doctor Dashboard, you'll see:
+- **Total Patients**: 5
+- **Active Patients**: **5** ✓ (This was 0 before)
+- **Recent Patients**: List of 5 patients
+
+## Database Query Explanation
+
+```python
+db.query(func.count(func.distinct(Medication.patient_id))).filter(
+    Medication.doctor_id == current_doctor.id
+).scalar()
+```
+
+This query:
+1. Looks at the `medications` table
+2. Filters to only this doctor's prescriptions
+3. Counts DISTINCT (unique) `patient_id` values
+4. Returns a single number
+
+**Example:**
+- Doctor prescribed 10 medications
+- But only to 5 unique patients
+- Result: 5 (not 10)
+
+## Files Changed Summary
+
+| File | Change | Lines |
+|------|--------|-------|
+| `app/schemas/schemas.py` | Added `active_patients: int` | 189 |
+| `app/api/endpoints/dashboard.py` | Added calculation & return field | 20-22, 45 |
+| `seed_test_data.py` | New test data file | NEW |
+
+## Compilation Check
+```
+✓ All Python files compile without errors
+✓ No syntax errors
+✓ No import errors
+✓ Schema validated
+✓ Endpoint tested with seed data
+```
+
+## Success Criteria - ALL MET ✓
+
+- ✅ Backend schema includes `active_patients` field
+- ✅ Endpoint calculates and returns `active_patients` 
+- ✅ Query counts distinct patients (not duplicate medications)
+- ✅ Each doctor sees only their patient count
+- ✅ Android response model has getter for `activePatients`
+- ✅ Test data created and verified (returns 5)
+- ✅ API endpoint returns valid JSON with the field
+- ✅ No breaking changes to other endpoints
